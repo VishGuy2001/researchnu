@@ -3,7 +3,7 @@ from typing import List, Dict
 from app.rag.embeddings import embed_one
 from app.rag.ingestor import get_col
 
-CONFIDENCE_THRESHOLD = 0.15
+CONFIDENCE_THRESHOLD = 0.35
 
 def semantic_search(query: str, top_k: int = 10) -> List[Dict]:
     # dense retrieval -- cosine similarity in embedding space

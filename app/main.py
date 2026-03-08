@@ -5,14 +5,9 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from app.api.schemas import QueryRequest, QueryResponse, Citation
 from app.agents.pipeline import run_query
-from app.db.database import init_db, log_query, upsert_session
 from dotenv import load_dotenv
-import time, uuid
 
 load_dotenv()
-
-# init db on startup
-init_db()
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -34,7 +29,7 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    return {"app": "ResearchNu", "version": "1.0.0", "docs": "/docs"}
+    return {"app": "Researchnu", "version": "1.0.0", "docs": "/docs"}
 
 @app.get("/health")
 def health():
@@ -43,28 +38,12 @@ def health():
 @app.post("/query", response_model=QueryResponse)
 @limiter.limit("10/minute")
 def query_endpoint(request: Request, req: QueryRequest):
-    session_id = str(uuid.uuid4())
-    ip = request.client.host
-    start = time.time()
     try:
         r = run_query(
             query=req.query,
             user_type=req.user_type,
             privacy_mode=req.privacy_mode
         )
-        latency_ms = int((time.time() - start) * 1000)
-
-        # log every query to sqlite/postgres
-        log_query(
-            query_text=req.query,
-            user_type=req.user_type,
-            novelty_score=r["novelty_score"],
-            sources_used=r.get("sources_used", []),
-            latency_ms=latency_ms,
-            session_id=session_id
-        )
-        upsert_session(session_id, ip)
-
         return QueryResponse(
             query=r["query"],
             summary=r["summary"],
