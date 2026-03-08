@@ -1,25 +1,26 @@
 import httpx
+import os
 from typing import List, Dict
 
-async def search(query: str, max_results: int = 20) -> List[Dict]:
-    # 200M+ open access papers, good for non-US research coverage
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(
-            "https://api.core.ac.uk/v3/search/works",
-            params={
-                "q": query,
-                "limit": max_results,
-                "sort": "relevance"
-            },
-            headers={"Authorization": "Bearer core_api_key_here"}  # free at core.ac.uk/services/api
-        )
-        out = []
+BASE = "https://api.core.ac.uk/v3/search/works"
+
+def search_core(query: str, max_results: int = 20) -> List[Dict]:
+    api_key = os.getenv("CORE_API_KEY", "")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key and api_key != "pending" else {}
+    try:
+        r = httpx.post(BASE, json={
+            "q": query, "limit": max_results
+        }, headers=headers, timeout=15)
+        results = []
         for p in r.json().get("results", []):
-            out.append({
+            results.append({
                 "title": p.get("title", ""),
-                "abstract": p.get("abstract", ""),
+                "abstract": p.get("abstract", "") or "",
+                "url": p.get("downloadUrl", "") or p.get("sourceFulltextUrls", [""])[0],
                 "year": str(p.get("yearPublished", "")),
-                "url": p.get("sourceFulltextUrls", [""])[0] or p.get("downloadUrl", ""),
-                "source": "CORE"
+                "source": "core"
             })
-        return out
+        return results
+    except Exception as e:
+        print(f"core error: {e}")
+        return []

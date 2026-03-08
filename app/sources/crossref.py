@@ -1,30 +1,28 @@
+# crossref.py
 import httpx
 from typing import List, Dict
 
-async def search(query: str, max_results: int = 20) -> List[Dict]:
-    # 150M+ works, used for doi verification and citation trust
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(
-            "https://api.crossref.org/works",
-            params={
-                "query": query,
-                "rows": max_results,
-                "sort": "relevance",
-                "select": "title,abstract,published,DOI,author,type"
-            },
-            headers={"User-Agent": "Researchnu/1.0 (vps39@drexel.edu)"}  # polite pool
-        )
-        out = []
-        for p in r.json().get("message", {}).get("items", []):
+def search_crossref(query: str, max_results: int = 20) -> List[Dict]:
+    try:
+        r = httpx.get("https://api.crossref.org/works", params={
+            "query": query, "rows": max_results,
+            "select": "title,abstract,DOI,published,URL"
+        }, timeout=15, headers={"User-Agent": "ResearchNu/1.0 (mailto:research@researchnu.com)"})
+        results = []
+        for item in r.json().get("message", {}).get("items", []):
+            title = item.get("title", [""])[0]
             year = ""
-            date_parts = p.get("published", {}).get("date-parts", [[""]])
-            if date_parts and date_parts[0]:
-                year = str(date_parts[0][0])
-            out.append({
-                "title": p.get("title", [""])[0],
-                "abstract": p.get("abstract", ""),
+            pub = item.get("published", {}).get("date-parts", [[""]])
+            if pub and pub[0]:
+                year = str(pub[0][0])
+            results.append({
+                "title": title,
+                "abstract": item.get("abstract", ""),
+                "url": f"https://doi.org/{item.get('DOI', '')}",
                 "year": year,
-                "url": f"https://doi.org/{p.get('DOI', '')}",
-                "source": "CrossRef"
+                "source": "crossref"
             })
-        return out
+        return results
+    except Exception as e:
+        print(f"crossref error: {e}")
+        return []

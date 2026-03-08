@@ -1,62 +1,39 @@
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict
-import asyncio
 from app.rag.ingestor import ingest
 from app.rag.retriever import hybrid_search
-from app.models.llm_client import complete
+from app.models.llm_client import groq_chat
+import importlib
 
-# source imports -- all 20
-from app.sources.pubmed import search as pubmed
-from app.sources.arxiv import search as arxiv
-from app.sources.openalex import search as openalex
-from app.sources.semantic_scholar import search as semantic_scholar
-from app.sources.europe_pmc import search as europe_pmc
-from app.sources.core_ac import search as core_ac
-from app.sources.crossref import search as crossref
-from app.sources.grants_nih import search as nih
-from app.sources.grants_nsf import search as nsf
-from app.sources.grants_eu import search as eu
-from app.sources.grants_ukri import search as ukri
-from app.sources.patents_uspto import search as uspto
-from app.sources.patents_wipo import search as wipo
-from app.sources.patents_epo import search as epo
-from app.sources.patents_lens import search as lens
-from app.sources.clinical_trials import search as clinical
-from app.sources.who_ictrp import search as who
-from app.sources.fda import search as fda
-from app.sources.ycombinator import search as yc
-from app.sources.product_hunt import search as producthunt
-
-# source weights per mode -- all sources run, weights affect ranking
+# source weights per user type
 SOURCE_WEIGHTS = {
-    "researcher": {
-        "academic": [pubmed, arxiv, openalex, semantic_scholar, europe_pmc, core_ac, crossref],
-        "grants": [nih, nsf],
-        "patents": [uspto],
-        "clinical": [clinical],
-        "market": []
-    },
-    "founder": {
-        "academic": [arxiv, openalex],
-        "grants": [],
-        "patents": [uspto, wipo, epo, lens],
-        "clinical": [],
-        "market": [yc, producthunt]
-    },
-    "grant": {
-        "academic": [pubmed, openalex],
-        "grants": [nih, nsf, eu, ukri],
-        "patents": [],
-        "clinical": [clinical, who],
-        "market": []
-    },
-    "all": {
-        "academic": [pubmed, arxiv, openalex, semantic_scholar, europe_pmc, core_ac, crossref],
-        "grants": [nih, nsf, eu, ukri],
-        "patents": [uspto, wipo, epo, lens],
-        "clinical": [clinical, who],
-        "market": [yc, producthunt]
-    }
+    "researcher": ["pubmed", "arxiv", "openalex", "semantic_scholar", "europe_pmc", "core", "crossref", "grants_nih", "grants_nsf", "patents_uspto", "clinical_trials"],
+    "founder":    ["arxiv", "openalex", "patents_uspto", "patents_wipo", "patents_epo", "patents_lens", "market_yc", "market_ph"],
+    "grant":      ["pubmed", "openalex", "grants_nih", "grants_nsf", "grants_eu", "grants_ukri", "clinical_trials", "who_ictrp"],
+    "all":        ["pubmed", "arxiv", "openalex", "semantic_scholar", "europe_pmc", "core", "crossref", "grants_nih", "grants_nsf", "grants_eu", "grants_ukri", "patents_uspto", "patents_wipo", "patents_epo", "patents_lens", "clinical_trials", "who_ictrp", "fda", "market_yc", "market_ph"],
+}
+
+SOURCE_FN = {
+    "pubmed":           ("app.sources.pubmed",           "search_pubmed"),
+    "arxiv":            ("app.sources.arxiv",             "search_arxiv"),
+    "openalex":         ("app.sources.openalex",          "search_openalex"),
+    "semantic_scholar": ("app.sources.semantic_scholar",  "search_semantic_scholar"),
+    "europe_pmc":       ("app.sources.europe_pmc",        "search_europe_pmc"),
+    "core":             ("app.sources.core",              "search_core"),
+    "crossref":         ("app.sources.crossref",          "search_crossref"),
+    "grants_nih":       ("app.sources.grants_nih",        "search_nih"),
+    "grants_nsf":       ("app.sources.grants_nsf",        "search_nsf"),
+    "grants_eu":        ("app.sources.grants_eu",         "search_eu_horizon"),
+    "grants_ukri":      ("app.sources.grants_ukri",       "search_ukri"),
+    "patents_uspto":    ("app.sources.patents_uspto",     "search_uspto"),
+    "patents_wipo":     ("app.sources.patents_wipo",      "search_wipo"),
+    "patents_epo":      ("app.sources.patents_epo",       "search_epo"),
+    "patents_lens":     ("app.sources.patents_lens",      "search_lens"),
+    "clinical_trials":  ("app.sources.clinical_trials",   "search_clinical_trials"),
+    "who_ictrp":        ("app.sources.who_ictrp",         "search_who"),
+    "fda":              ("app.sources.fda",               "search_fda"),
+    "market_yc":        ("app.sources.market_yc",         "search_yc"),
+    "market_ph":        ("app.sources.market_ph",         "search_product_hunt"),
 }
 
 class State(TypedDict):
@@ -71,117 +48,119 @@ class State(TypedDict):
     novelty_report: str
     summary: str
 
-# -- AGENT 1: RETRIEVER --
 def retriever_agent(state: State) -> State:
-    # fires all sources for the mode simultaneously
-    q = state["processed_query"] or state["query"]
-    mode = state["user_type"]
-    sources = SOURCE_WEIGHTS.get(mode, SOURCE_WEIGHTS["all"])
-
-    async def fetch():
-        tasks = []
-        for group in sources.values():
-            for src in group:
-                tasks.append(src(q))
-        return await asyncio.gather(*tasks, return_exceptions=True)
-
-    results = asyncio.run(fetch())
-    source_names = []
-    for group in sources.values():
-        for src in group:
-            source_names.append(src.__module__.split(".")[-1])
-
-    for i, papers in enumerate(results):
-        if isinstance(papers, Exception) or not papers:
-            continue
-        ingest(papers, source=source_names[i])
-
+    q = state["processed_query"]
+    ut = state["user_type"]
+    sources = SOURCE_WEIGHTS.get(ut, SOURCE_WEIGHTS["all"])
+    papers, source_names = [], []
+    for src in sources:
+        try:
+            mod_path, fn_name = SOURCE_FN[src]
+            mod = importlib.import_module(mod_path)
+            fn = getattr(mod, fn_name)
+            results = fn(q)
+            if results:
+                papers.append(results)
+                source_names.append(src)
+        except Exception as e:
+            print(f"source {src} failed: {e}")
+    for i, p in enumerate(papers):
+        try:
+            ingest(p, source=source_names[i])
+        except Exception as e:
+            print(f"ingest {source_names[i]} failed: {e}")
     chunks = hybrid_search(q, top_k=10)
-    used = list(set([c["source"] for c in chunks]))
-    return {**state, "chunks": chunks, "sources_used": used}
+    return {**state, "chunks": chunks, "sources_used": source_names}
 
-# -- AGENT 2: REASONER --
 def reasoner_agent(state: State) -> State:
-    # synthesizes answer from chunks, groq never sees raw query
-    ctx = "\n\n".join([
-        f"[{i+1}] {c['title']} ({c['source']}, {c['year']})\n{c['content'][:400]}"
-        for i, c in enumerate(state["chunks"])
-    ])
-    prompt = f"""You are a research analyst. Use ONLY the sources below. No hallucination.
+    ctx = "\n\n".join([f"[{c['source']}] {c['title']}\n{c['content']}" for c in state["chunks"]])
+    prompt = f"""You are a research analyst. Based on the following sources, answer the query comprehensively.
 
-Query: {state["processed_query"] or state["query"]}
+Query: {state['query']}
 
 Sources:
 {ctx}
 
 Provide:
-1) Key findings with source references [N]
-2) Research gaps identified
-3) Confidence level and why"""
+1. Key findings with source references [1], [2] etc
+2. Research gaps identified
+3. Confidence level and why
 
-    ans = complete(prompt)
-    cites = [
-        {"title": c["title"], "url": c["url"], "source": c["source"], "year": c["year"]}
-        for c in state["chunks"] if c.get("url")
-    ]
-    return {**state, "answer": ans, "citations": cites}
+Be specific and cite sources."""
+    answer = groq_chat(prompt)
+    citations = [{"title": c["title"], "url": c["url"], "source": c["source"], "year": c["year"]} for c in state["chunks"]]
+    return {**state, "answer": answer, "citations": citations}
 
-# -- AGENT 3: NOVELTY --
 def novelty_agent(state: State) -> State:
-    # scores how novel the query idea is 0-100
-    top5 = state["chunks"][:5]
-    existing = "\n".join([
-        f"- {c['title']} ({c['source']}): {c['content'][:200]}"
-        for c in top5
-    ])
-    prompt = f"""Assess novelty of this idea: {state["query"]}
+    ctx = "\n".join([f"- {c['title']} ({c['year']}) [{c['source']}]" for c in state["chunks"]])
+    prompt = f"""You are a research novelty evaluator.
 
-Existing work:
-{existing}
+Query/Idea: {state['query']}
 
-Give:
-- Novelty score 0-100 (100 = completely novel)
-- Top 3 overlapping works
-- What aspects are still novel
-- Recommendation: proceed, pivot, or abandon"""
+Existing works found:
+{ctx}
 
-    report = complete(prompt)
-    score = round((1 - max((c.get("score", 0) for c in top5), default=0)) * 100, 1)
+Rate the novelty of this query/idea on a scale of 0-100 where:
+- 0-30: Well covered, many papers exist
+- 31-60: Partially covered, some gaps exist
+- 61-100: Highly novel, few or no papers
+
+Respond with:
+SCORE: [number 0-100]
+TOP_OVERLAPS: [list 3 most overlapping works]
+NOVEL_ASPECTS: [what aspects are still novel]
+RECOMMENDATION: [pursue/pivot/abandon and why]"""
+    report = groq_chat(prompt)
+    score = 50.0
+    for line in report.split("\n"):
+        if line.strip().startswith("SCORE:"):
+            try:
+                score = float(line.replace("SCORE:", "").strip())
+            except:
+                pass
     return {**state, "novelty_score": score, "novelty_report": report}
 
-# -- AGENT 4: SUMMARIZER --
 def summarizer_agent(state: State) -> State:
-    # plain english summary, accessible to non-technical users
-    summary = complete(
-        f"Summarize in plain English under 100 words, no jargon:\n{state['answer'][:1500]}"
-    )
+    prompt = f"""Summarize the following research analysis in plain English under 100 words for a non-expert.
+
+Query: {state['query']}
+Analysis: {state['answer'][:1000]}
+
+Be clear, concise, and jargon-free."""
+    summary = groq_chat(prompt)
     return {**state, "summary": summary}
 
-# -- WIRE LANGGRAPH -- sequential to avoid concurrent state write conflicts
 _pipeline = None
 
 def get_pipeline():
     global _pipeline
-    if _pipeline is None:
-        g = StateGraph(State)
-        g.add_node("retriever", retriever_agent)
-        g.add_node("reasoner", reasoner_agent)
-        g.add_node("novelty", novelty_agent)
-        g.add_node("summarizer", summarizer_agent)
-        g.set_entry_point("retriever")
-        # sequential -- retriever -> reasoner -> novelty -> summarizer
-        g.add_edge("retriever", "reasoner")
-        g.add_edge("reasoner", "novelty")
-        g.add_edge("novelty", "summarizer")
-        g.add_edge("summarizer", END)
-        _pipeline = g.compile()
+    if _pipeline:
+        return _pipeline
+    g = StateGraph(State)
+    g.add_node("retriever", retriever_agent)
+    g.add_node("reasoner", reasoner_agent)
+    g.add_node("novelty", novelty_agent)
+    g.add_node("summarizer", summarizer_agent)
+    g.set_entry_point("retriever")
+    g.add_edge("retriever", "reasoner")
+    g.add_edge("reasoner", "novelty")
+    g.add_edge("novelty", "summarizer")
+    g.add_edge("summarizer", END)
+    _pipeline = g.compile()
     return _pipeline
 
-def run_query(query: str, user_type: str = "researcher", privacy_mode: bool = False) -> dict:
-    # privacy_mode=True -- ollama processes query locally before groq sees it
-    from app.models.llm_client import process_query_locally
-    processed = process_query_locally(query) if privacy_mode else query
-    return get_pipeline().invoke({
+def run_query(query: str, user_type: str = "all", privacy_mode: bool = False) -> Dict:
+    # privacy mode uses local ollama for query processing
+    if privacy_mode:
+        try:
+            from app.models.llm_client import local_chat
+            processed = local_chat(f"Rephrase this search query for academic research: {query}")
+        except:
+            processed = query
+    else:
+        processed = query
+
+    init = {
         "query": query,
         "processed_query": processed,
         "user_type": user_type,
@@ -191,5 +170,6 @@ def run_query(query: str, user_type: str = "researcher", privacy_mode: bool = Fa
         "citations": [],
         "novelty_score": 0.0,
         "novelty_report": "",
-        "summary": ""
-    })
+        "summary": "",
+    }
+    return get_pipeline().invoke(init)

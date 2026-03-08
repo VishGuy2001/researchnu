@@ -1,24 +1,25 @@
 import httpx
 from typing import List, Dict
 
-async def search(query: str, max_results: int = 20) -> List[Dict]:
-    # US patents, most detailed patent data available
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(
-            "https://search.patentsview.org/api/v1/patent/",
-            json={
-                "q": {"_text_any": {"patent_abstract": query}},
-                "f": ["patent_id", "patent_title", "patent_abstract", "patent_date", "inventor_first_name", "inventor_last_name"],
-                "o": {"per_page": max_results}
-            }
-        )
-        out = []
-        for p in r.json().get("patents", []):
-            out.append({
+BASE = "https://api.patentsview.org/patents/query"
+
+def search_uspto(query: str, max_results: int = 20) -> List[Dict]:
+    try:
+        r = httpx.post(BASE, json={
+            "q": {"_text_any": {"patent_abstract": query}},
+            "f": ["patent_id", "patent_title", "patent_abstract", "patent_date"],
+            "o": {"per_page": max_results}
+        }, timeout=15)
+        results = []
+        for p in r.json().get("patents") or []:
+            results.append({
                 "title": p.get("patent_title", ""),
                 "abstract": p.get("patent_abstract", ""),
-                "year": p.get("patent_date", "")[:4] if p.get("patent_date") else "",
-                "url": f"https://patents.google.com/patent/US{p.get('patent_id', '')}",
-                "source": "USPTO"
+                "url": f"https://patents.google.com/patent/US{p.get('patent_id','')}",
+                "year": p.get("patent_date", "")[:4],
+                "source": "patents_uspto"
             })
-        return out
+        return results
+    except Exception as e:
+        print(f"patents_uspto error: {e}")
+        return []

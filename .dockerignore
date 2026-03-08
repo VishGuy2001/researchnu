@@ -1,0 +1,49 @@
+# git
+.git/
+.gitignore
+
+# python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# env
+.env
+*.env
+
+# local databases
+researchnu.db
+*.db
+chroma_db/
+
+# models cache
+models/
+.cache/
+
+# jupyter
+*.ipynb
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# docs
+*.md
+*.pdf
+*.png
+*.jpg
+
+# tests
+tests/
+
+# venv
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/

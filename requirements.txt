@@ -1,0 +1,18 @@
+fastapi
+uvicorn[standard]
+streamlit
+httpx
+python-dotenv
+langchain
+langgraph
+langchain-groq
+groq
+chromadb
+rank-bm25
+pydantic
+slowapi
+mcp
+psycopg2-binary
+ollama
+sentence-transformers
+torch --index-url https://download.pytorch.org/whl/cpu

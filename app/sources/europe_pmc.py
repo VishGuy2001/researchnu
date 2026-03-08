@@ -1,26 +1,24 @@
 import httpx
 from typing import List, Dict
 
-async def search(query: str, max_results: int = 20) -> List[Dict]:
-    # european biomedical literature, good overlap with pubmed but catches more EU research
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(
-            "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-            params={
-                "query": query,
-                "resultType": "core",
-                "pageSize": max_results,
-                "format": "json",
-                "sort": "RELEVANCE"
-            }
-        )
-        out = []
+BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+
+def search_europe_pmc(query: str, max_results: int = 20) -> List[Dict]:
+    try:
+        r = httpx.get(BASE, params={
+            "query": query, "resultType": "core",
+            "pageSize": max_results, "format": "json"
+        }, timeout=15)
+        results = []
         for p in r.json().get("resultList", {}).get("result", []):
-            out.append({
+            results.append({
                 "title": p.get("title", ""),
                 "abstract": p.get("abstractText", ""),
+                "url": f"https://europepmc.org/article/{p.get('source','')}/{p.get('id','')}",
                 "year": str(p.get("pubYear", "")),
-                "url": f"https://europepmc.org/article/{p.get('source', '')}/{p.get('id', '')}",
-                "source": "Europe PMC"
+                "source": "europe_pmc"
             })
-        return out
+        return results
+    except Exception as e:
+        print(f"europe_pmc error: {e}")
+        return []

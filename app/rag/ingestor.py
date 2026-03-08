@@ -28,11 +28,15 @@ def chunk(text: str, size: int = 400, overlap: int = 50) -> List[str]:
 def ingest(papers: List[Dict], source: str = "unknown"):
     col = get_col()
     docs, embs, metas, ids = [], [], [], []
+    seen_ids = set()  # dedup within this batch before upsert
     for p in papers:
         text = f"{p.get('title', '')} {p.get('abstract', '')}"
-        for c in chunk(text):
-            # dedup by content hash — same paper never stored twice
-            doc_id = hashlib.md5(c.encode()).hexdigest()
+        for i, c in enumerate(chunk(text)):
+            # add index to hash so two identical chunks get unique ids
+            doc_id = hashlib.md5(f"{c}{i}{source}".encode()).hexdigest()
+            if doc_id in seen_ids:
+                continue
+            seen_ids.add(doc_id)
             docs.append(c)
             embs.append(embed_one(c))
             metas.append({

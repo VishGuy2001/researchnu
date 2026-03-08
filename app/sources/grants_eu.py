@@ -1,27 +1,13 @@
 import httpx
 from typing import List, Dict
 
-async def search(query: str, max_results: int = 20) -> List[Dict]:
-    # EU Horizon grants, biggest research funding program in the world
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.get(
-            "https://cordis.europa.eu/api/rest/project",
-            params={
-                "q": query,
-                "p": 1,
-                "num": max_results,
-                "format": "json"
-            }
-        )
-        out = []
-        for p in r.json().get("hits", {}).get("hit", []):
-            proj = p.get("project", {})
-            out.append({
-                "title": proj.get("title", ""),
-                "abstract": proj.get("objective", ""),
-                "year": proj.get("startDate", "")[:4],
-                "amount": proj.get("totalCost", 0),
-                "url": f"https://cordis.europa.eu/project/id/{proj.get('id', '')}",
-                "source": "EU Horizon"
-            })
-        return out
+def search_eu_horizon(query: str, max_results: int = 20) -> List[Dict]:
+    try:
+        r = httpx.get("https://cordis.europa.eu/api/projects", params={"q": query, "p": 1, "n": max_results, "format": "json"}, timeout=15)
+        results = []
+        for p in r.json().get("results", []):
+            results.append({"title": p.get("title", ""), "abstract": p.get("objective", "") or "", "url": f"https://cordis.europa.eu/project/id/{p.get('id','')}", "year": str(p.get("startDate", ""))[:4], "source": "grants_eu"})
+        return results
+    except Exception as e:
+        print(f"grants_eu error: {e}")
+        return []
