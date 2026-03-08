@@ -128,25 +128,49 @@ Provide:
 
 # -- AGENT 3: NOVELTY --
 def novelty_agent(state: State) -> State:
-    # scores how novel the query idea is 0-100
+    # scores novelty and suggests unexplored directions
     top5 = state["chunks"][:5]
+    if not top5:
+        return {**state, "novelty_score": 85.0, "novelty_report": "No closely related work found. Idea appears highly novel."}
+
     existing = "\n".join([
-        f"- {c['title']} ({c['source']}): {c['content'][:200]}"
+        f"- {c['title']} ({c['source']}, {c['year']}): {c['content'][:200]}"
         for c in top5
     ])
-    prompt = f"""Assess novelty of this idea: {state["query"]}
 
-Existing work:
+    prompt = f"""You are a research novelty analyst. Assess this idea against existing work.
+
+Idea: {state["query"]}
+
+Most relevant existing work found:
 {existing}
 
-Give:
-- Novelty score 0-100 (100 = completely novel)
-- Top 3 overlapping works
-- What aspects are still novel
-- Recommendation: proceed, pivot, or abandon"""
+Respond in this exact format:
+
+NOVELTY SCORE: [0-100 integer, where 100 = completely novel, 0 = already exists]
+
+EXISTING OVERLAP:
+- [top 3 most similar existing works and why they overlap]
+
+NOVEL ASPECTS:
+- [what parts of this idea are still unexplored]
+
+UNEXPLORED DIRECTIONS:
+- [3 specific adjacent ideas that don't exist yet but are feasible and trending based on the gaps you see]
+
+RECOMMENDATION: [proceed / pivot / abandon] because [one sentence reason]"""
 
     report = complete(prompt)
-    score = round((1 - max((c.get("score", 0) for c in top5), default=0)) * 100, 1)
+
+    # extract score from response
+    try:
+        score_line = [l for l in report.split("\n") if "NOVELTY SCORE:" in l][0]
+        score = float(score_line.split(":")[1].strip().split()[0])
+        score = max(0, min(100, score))
+    except:
+        # fallback -- inverse of best semantic match
+        score = round((1 - max((c.get("score", 0) for c in top5), default=0)) * 100, 1)
+
     return {**state, "novelty_score": score, "novelty_report": report}
 
 # -- AGENT 4: SUMMARIZER --
