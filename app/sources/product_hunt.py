@@ -25,7 +25,7 @@ async def search(query: str, max_results: int = 20) -> List[Dict]:
                 """ % (max_results, query.replace('"', ''))
             },
             headers={
-                "Authorization": f"Bearer {__import__('os').getenv('PRODUCT_HUNT_TOKEN', '')}",
+                "Authorization": f"Bearer {__import__('os').getenv('PRODUCT_HUNT_API_KEY', '')}",
                 "Content-Type": "application/json"
             }
         )
@@ -41,8 +41,5 @@ async def search(query: str, max_results: int = 20) -> List[Dict]:
                 "source": "Product Hunt"
             })
         return out
-```
 
-Save it. You need a free Product Hunt API token — go to **api.producthunt.com/v2/oauth/applications** → create app → get token → add to `.env`:
-```
-PRODUCT_HUNT_TOKEN=your_token_here
+
