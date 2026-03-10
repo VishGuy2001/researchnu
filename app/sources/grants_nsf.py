@@ -4,8 +4,7 @@ from typing import List, Dict
 def search_nsf(query: str, max_results: int = 20) -> List[Dict]:
     try:
         r = httpx.get("https://api.nsf.gov/services/v1/awards.json", params={
-            "keyword": query, "rpp": max_results,
-            "fields": "id,title,abstractText,date,pdPIName"
+            "keyword": query, "rpp": max_results
         }, timeout=15)
         results = []
         for p in r.json().get("response", {}).get("award", []):

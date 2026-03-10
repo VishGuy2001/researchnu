@@ -77,8 +77,14 @@ st.divider()
 query = st.text_area(
     "What do you want to explore?",
     placeholder="e.g. Using ML to predict orthopedic implant failure in total knee arthroplasty",
-    height=100
+    height=100,
+    key="query_input"
 )
+
+# enter to submit
+if query and query.endswith("\n"):
+    query = query.strip()
+    run = True
 
 col1, col2 = st.columns([1, 5])
 with col1:

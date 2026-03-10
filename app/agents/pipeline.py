@@ -3,6 +3,7 @@ from typing import TypedDict, List, Dict
 from app.rag.ingestor import ingest
 from app.rag.retriever import hybrid_search
 from app.models.llm_client import groq_chat
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import importlib
 
 # source weights per user type
@@ -19,7 +20,7 @@ SOURCE_FN = {
     "openalex":         ("app.sources.openalex",          "search_openalex"),
     "semantic_scholar": ("app.sources.semantic_scholar",  "search_semantic_scholar"),
     "europe_pmc":       ("app.sources.europe_pmc",        "search_europe_pmc"),
-    "core":             ("app.sources.core",              "search_core"),
+    "core":             ("app.sources.core_ac",              "search_core"),
     "crossref":         ("app.sources.crossref",          "search_crossref"),
     "grants_nih":       ("app.sources.grants_nih",        "search_nih"),
     "grants_nsf":       ("app.sources.grants_nsf",        "search_nsf"),
@@ -32,8 +33,8 @@ SOURCE_FN = {
     "clinical_trials":  ("app.sources.clinical_trials",   "search_clinical_trials"),
     "who_ictrp":        ("app.sources.who_ictrp",         "search_who"),
     "fda":              ("app.sources.fda",               "search_fda"),
-    "market_yc":        ("app.sources.market_yc",         "search_yc"),
-    "market_ph":        ("app.sources.market_ph",         "search_product_hunt"),
+    "market_yc":        ("app.sources.ycombinator",         "search_yc"),
+    "market_ph":        ("app.sources.product_hunt",         "search_product_hunt"),
 }
 
 class State(TypedDict):
@@ -50,25 +51,41 @@ class State(TypedDict):
 
 def retriever_agent(state: State) -> State:
     q = state["processed_query"]
-    ut = state["user_type"]
-    sources = SOURCE_WEIGHTS.get(ut, SOURCE_WEIGHTS["all"])
-    papers, source_names = [], []
-    for src in sources:
+    
+    # check cache first -- if we have enough chunks skip re-fetching
+    cached = hybrid_search(q, top_k=10)
+    if len(cached) >= 5:
+        print(f"cache hit -- skipping source fetch")
+        return {**state, "chunks": cached, "sources_used": ["cache"]}
+    
+    # rest of fetch logic...
+
+    def fetch(src):
         try:
             mod_path, fn_name = SOURCE_FN[src]
             mod = importlib.import_module(mod_path)
             fn = getattr(mod, fn_name)
             results = fn(q)
+            return src, results
+        except Exception as e:
+            print(f"source {src} failed: {e}")
+            return src, []
+
+    papers, source_names = [], []
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(fetch, src): src for src in sources}
+        for future in as_completed(futures):
+            src, results = future.result()
             if results:
                 papers.append(results)
                 source_names.append(src)
-        except Exception as e:
-            print(f"source {src} failed: {e}")
+
     for i, p in enumerate(papers):
         try:
             ingest(p, source=source_names[i])
         except Exception as e:
             print(f"ingest {source_names[i]} failed: {e}")
+
     chunks = hybrid_search(q, top_k=10)
     return {**state, "chunks": chunks, "sources_used": source_names}
 
@@ -172,4 +189,4 @@ def run_query(query: str, user_type: str = "all", privacy_mode: bool = False) ->
         "novelty_report": "",
         "summary": "",
     }
-    return get_pipeline().invoke(init)
+    return get_pipeline().invoke(init)  

@@ -1,22 +1,26 @@
 import httpx
 from typing import List, Dict
 
-BASE = "https://api.patentsview.org/patents/query"
-
 def search_uspto(query: str, max_results: int = 20) -> List[Dict]:
     try:
-        r = httpx.post(BASE, json={
-            "q": {"_text_any": {"patent_abstract": query}},
-            "f": ["patent_id", "patent_title", "patent_abstract", "patent_date"],
-            "o": {"per_page": max_results}
-        }, timeout=15)
+        r = httpx.get("https://api.openalex.org/works", params={
+            "search": query,
+            "filter": "type:patent",
+            "per-page": max_results,
+            "select": "title,abstract_inverted_index,doi,publication_year"
+        }, timeout=15, headers={"User-Agent": "ResearchNu/1.0"})
         results = []
-        for p in r.json().get("patents") or []:
+        for w in r.json().get("results", []):
+            words = {}
+            for word, positions in (w.get("abstract_inverted_index") or {}).items():
+                for pos in positions:
+                    words[pos] = word
+            abstract = " ".join(words[i] for i in sorted(words))
             results.append({
-                "title": p.get("patent_title", ""),
-                "abstract": p.get("patent_abstract", ""),
-                "url": f"https://patents.google.com/patent/US{p.get('patent_id','')}",
-                "year": p.get("patent_date", "")[:4],
+                "title": w.get("title", ""),
+                "abstract": abstract,
+                "url": w.get("doi", ""),
+                "year": str(w.get("publication_year", "")),
                 "source": "patents_uspto"
             })
         return results
