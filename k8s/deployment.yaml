@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: researchnu-api
+  labels:
+    app: researchnu-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: researchnu-api
+  template:
+    metadata:
+      labels:
+        app: researchnu-api
+    spec:
+      containers:
+        - name: researchnu-api
+          image: researchnu:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: researchnu-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
